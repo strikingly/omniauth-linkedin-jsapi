@@ -59,7 +59,11 @@ module OmniAuth
       attr_accessor :access_token
 
       def request_phase
-        redirect callback_url, request.params
+        url = callback_url
+        url << "?" unless url.match(/\?/)
+        url << "&" unless url.match(/[\&\?]$/)
+        url << Rack::Utils.build_query(request.params)
+        redirect url
       end
 
       def callback_phase 
