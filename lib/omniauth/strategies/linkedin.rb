@@ -2,6 +2,7 @@ require 'oauth'
 require 'omniauth'
 require 'base64'
 require 'openssl'
+require 'multi_json'
 
 module OmniAuth
   module Strategies
@@ -19,9 +20,16 @@ module OmniAuth
       option :api_key, nil
       option :secret_key, nil
 
-      option :fields, ["id", "email-address", "first-name", "last-name", "headline", "industry", "picture-url", "public-profile-url", "location"]
+      option :client_options, {
+        :site               => 'https://api.linkedin.com',
+        :request_token_path => '/uas/oauth/requestToken',
+        :authorize_path     => '/uas/oauth/authorize',
+        :access_token_path  => '/uas/oauth/accessToken'
+      }
 
       option :scope, 'r_basicprofile r_emailaddress'
+
+      option :fields, ["id", "email-address", "first-name", "last-name", "headline", "industry", "picture-url", "public-profile-url", "location"]
 
       uid { raw_info['id'] }
 
@@ -29,7 +37,6 @@ module OmniAuth
         {
           :name => user_name,
           :email => raw_info['emailAddress'],
-          :nickname => user_name,
           :first_name => raw_info['firstName'],
           :last_name => raw_info['lastName'],
           :location => raw_info['location'],
@@ -51,17 +58,14 @@ module OmniAuth
 
       attr_accessor :access_token
 
+      def request_phase
+        redirect callback_url, request.params
+      end
+
       def callback_phase 
         if request_contains_secure_cookie?
           # We should already have an oauth2 token from secure cookie. 
           # Need to exchange it for an oauth token for REST API
-          client = OAuth::Consumer.new(options.api_key, options.secret_key, 
-            :site => 'https://api.linkedin.com',
-            :http_method        => :post,
-            :request_token_path => '/uas/oauth/requestToken',
-            :authorize_path     => '/uas/oauth/authorize',
-            :access_token_path  => '/uas/oauth/accessToken'
-          )
           self.access_token = client.get_access_token(nil, {}, {:xoauth_oauth2_access_token => secure_cookie['access_token']})
           super
         else
@@ -69,7 +73,9 @@ module OmniAuth
         end
       end
 
-      private
+      def client
+        @client ||= OAuth::Consumer.new(options.api_key, options.secret_key, options.client_options)
+      end
 
       def request_contains_secure_cookie?
         secure_cookie && secure_cookie['access_token']
@@ -84,21 +90,21 @@ module OmniAuth
       end
 
       def parse_secure_cookie(cookie)
-        payload = JSON.parse cookie
-        if validate_signature(options.secret_key, payload)
+        payload = MultiJson.decode cookie
+        if validate_signature(payload)
           payload
         else
           raise InvalidSecureCookieError, 'secure cookie signature validation fails'
         end
       end
 
-      def validate_signature(secret, payload)
+      def validate_signature(payload)
         valid = false
-        if payload['signature_version'] == '1'
-          if payload['signature_order'].present? and payload['signature_order'].is_a?(Array)
+        if payload['signature_version'] == '1' or payload['signature_version'] == 1
+          if !payload['signature_order'].nil? and payload['signature_order'].is_a?(Array)
             plain_msg = payload['signature_order'].map {|key| payload[key]}.join('')
             if payload['signature_method'] == 'HMAC-SHA1'
-              signature = Base64.encode64(OpenSSL::HMAC.digest('sha1', secret, plain_msg)).chomp
+              signature = Base64.encode64(OpenSSL::HMAC.digest('sha1', options.secret_key, plain_msg)).chomp
               if signature == payload['signature']
                 valid = true
               end
