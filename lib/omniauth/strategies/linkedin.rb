@@ -48,6 +48,13 @@ module OmniAuth
         }
       end
 
+      credentials do
+        {
+          :token  => access_token.token, 
+          :secret => access_token.secret
+        }
+      end
+
       extra do
         { 'raw_info' => raw_info }
       end
@@ -64,6 +71,10 @@ module OmniAuth
         url << "&" unless url.match(/[\&\?]$/)
         url << Rack::Utils.build_query(request.params)
         redirect url
+      rescue ::Timeout::Error => e
+        fail!(:timeout, e)
+      rescue ::Net::HTTPFatalError, ::OpenSSL::SSL::SSLError => e
+        fail!(:service_unavailable, e)
       end
 
       def callback_phase 
@@ -75,6 +86,16 @@ module OmniAuth
         else
           raise NoSecureCookieError, 'must pass a `linkedin_oauth_XXX` cookie'
         end
+      rescue ::Timeout::Error => e
+        fail!(:timeout, e)
+      rescue ::Net::HTTPFatalError, ::OpenSSL::SSL::SSLError => e
+        fail!(:service_unavailable, e)
+      rescue ::OAuth::Unauthorized => e
+        fail!(:invalid_credentials, e)
+      rescue ::MultiJson::DecodeError => e
+        fail!(:invalid_response, e)
+      rescue ::OmniAuth::NoSessionError => e
+        fail!(:session_expired, e)
       end
 
       def client
