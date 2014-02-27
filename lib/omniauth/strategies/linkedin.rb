@@ -12,6 +12,7 @@ module OmniAuth
       include OmniAuth::Strategy
       class NoSecureCookieError < StandardError; end
       class InvalidSecureCookieError < StandardError; end
+      class LinkedinServerError < StandardError; end
 
       args [:api_key, :secret_key]
 
@@ -60,7 +61,23 @@ module OmniAuth
       end
 
       def raw_info
-        @raw_info ||= MultiJson.decode(access_token.get("/v1/people/~:(#{options.fields.join(',')})?format=json").body)
+        @raw_info ||= lambda do
+          # Add retry logic to user info fetching because sometimes Linkedin gets back with the following data:
+          # raw_info: {
+          #   errorCode: 0,
+          #   message: "Could not find person based on: ~",
+          #   requestId: "***************",
+          #   status: 404,
+          #   timestamp: 1393490622830.0
+          # }
+          try_count = 0
+          begin
+            raw_info = MultiJson.decode(access_token.get("/v1/people/~:(#{options.fields.join(',')})?format=json").body)
+            try_count += 1
+          end while raw_info['errorCode'].present? and try_count < 5
+          raise LinkedinServerError, raw_info['message'] if raw_info['errorCode'].present?
+          raw_info
+        end.call
       end
 
       attr_accessor :access_token
@@ -86,6 +103,12 @@ module OmniAuth
         else
           raise NoSecureCookieError, 'must pass a `linkedin_oauth_XXX` cookie'
         end
+      rescue NoSecureCookieError => e
+        fail!(:invalid_credentials, e)
+      rescue InvalidSecureCookieError => e
+        fail!(:invalid_credentials, e)
+      rescue LinkedinServerError => e
+        fail!(:invalid_response, e)
       rescue ::Timeout::Error => e
         fail!(:timeout, e)
       rescue ::Net::HTTPFatalError, ::OpenSSL::SSL::SSLError => e
