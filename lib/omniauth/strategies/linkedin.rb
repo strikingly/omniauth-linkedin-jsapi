@@ -62,6 +62,14 @@ module OmniAuth
 
       def raw_info
         @raw_info ||= lambda do
+          # Add retry logic to user info fetching because sometimes Linkedin gets back with the following data:
+          # raw_info: {
+          #   errorCode: 0,
+          #   message: "Could not find person based on: ~",
+          #   requestId: "***************",
+          #   status: 404,
+          #   timestamp: 1393490622830.0
+          # }
           try_count = 0
           begin
             raw_info = MultiJson.decode(access_token.get("/v1/people/~:(#{options.fields.join(',')})?format=json").body)
